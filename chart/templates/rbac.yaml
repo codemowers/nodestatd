@@ -1,0 +1,46 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: nodestatd
+  namespace: {{ .Release.Namespace | quote }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: nodestatd
+rules:
+  {{- if .Values.images.enabled }}
+  - apiGroups: ["codemowers.cloud"]
+    resources: ["containerimages"]
+    verbs: ["get", "list", "create", "update", "delete"]
+  # Node UIDs for owner references; entries of nodes that left the cluster are
+  # released during resync.
+  - apiGroups: [""]
+    resources: ["nodes"]
+    verbs: ["list"]
+  {{- end }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: nodestatd
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: nodestatd
+subjects:
+  - kind: ServiceAccount
+    name: nodestatd
+    namespace: {{ .Release.Namespace | quote }}
+---
+# Read access for consumers such as driftmower-mcp; aggregated into view.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: nodestatd-containerimages-view
+  labels:
+    rbac.authorization.k8s.io/aggregate-to-view: "true"
+rules:
+  - apiGroups: ["codemowers.cloud"]
+    resources: ["containerimages"]
+    verbs: ["get", "list", "watch"]

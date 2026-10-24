@@ -1,0 +1,175 @@
+# A ContainerImage as nodestatd records it, with every field populated.
+# The image was pulled by its multi-platform index onto three nodes: two amd64
+# nodes and one arm64 node. Values shared by every manifest are stored once at
+# the top level; fields absent from a manifest or node entry inherit them.
+apiVersion: codemowers.cloud/v1alpha1
+kind: ContainerImage
+metadata:
+  # Named after the digest the image was pulled by: here the index.
+  name: sha256-d2b3cd93a48acdc91327533ce28fcb3169b2d9feaf73817dc2eb68858df64edb
+  # One owner reference per node holding the image; the garbage collector
+  # deletes the object once all of these Nodes are gone.
+  ownerReferences:
+    - apiVersion: v1
+      kind: Node
+      name: worker-1
+      uid: 5aedc74b-4698-4ae2-8fdf-76563f081f0f
+    - apiVersion: v1
+      kind: Node
+      name: worker-2
+      uid: 8fa9c5ab-bad7-4c1f-86de-2e7e0b60b81e
+    - apiVersion: v1
+      kind: Node
+      name: arm-1
+      uid: de5966a4-4683-4189-b331-35701528c68c
+
+# User intent. nodestatd never writes spec and preserves it on updates.
+spec:
+  # Overrides the source derived from image metadata.
+  source: https://github.com/stefanprodan/podinfo
+  pin:
+    # Always | WhileInUse. nodestatd marks records it pins with the
+    # codemowers.cloud/pinned label and only ever removes its own pins.
+    policy: WhileInUse
+    # How long WhileInUse keeps the image after the last use ends anywhere.
+    gracePeriod: 24h
+    # Limits the nodes the policy applies to; all nodes when absent. Nodes
+    # whose architecture the index lacks are skipped.
+    nodeSelector:
+      node-role.kubernetes.io/worker: "true"
+    # Also pull the image onto selected nodes that lack it.
+    warm: true
+
+# Summary nodestatd derives from the fields below.
+status:
+  image: ghcr.io/stefanprodan/podinfo:6.7.0
+  source: https://github.com/stefanprodan/podinfo
+  # Set only when no listed node uses the image; worker-1 runs it, so in this
+  # object it would be absent. Shown here for completeness.
+  unused: true
+
+# The index the object is named after; absent for single-platform pulls.
+index:
+  digest: sha256:d2b3cd93a48acdc91327533ce28fcb3169b2d9feaf73817dc2eb68858df64edb
+  mediaType: application/vnd.oci.image.index.v1+json
+  annotations:
+    org.opencontainers.image.ref.name: 6.7.0
+  # Linux platforms the index offers, excluding attestation manifests.
+  platforms:
+    - digest: sha256:0060e4fc3052c383ea920673d08388fd6aa3bfc3536932f7c08edd4e4a616520
+      mediaType: application/vnd.oci.image.manifest.v1+json
+      architecture: amd64
+    - digest: sha256:3ce55f0cfdb1200738bd3d0cd955866f09fe84edbb5930575a155beda649bde7
+      mediaType: application/vnd.oci.image.manifest.v1+json
+      architecture: arm
+      variant: v7
+    - digest: sha256:53d266d18dcd714920b0aed2c54b55d85bbf38ff59b931b4d6f6b6aca0da7e7d
+      mediaType: application/vnd.oci.image.manifest.v1+json
+      architecture: arm64
+
+# Config and manifest fields every manifest in manifests shares.
+labels:
+  maintainer: stefanprodan
+  org.opencontainers.image.description: Go microservice template for Kubernetes
+  org.opencontainers.image.licenses: Apache-2.0
+  org.opencontainers.image.revision: 0b1481aa8ed0a6c34af84f779824a74200d5c1d6
+  org.opencontainers.image.source: https://github.com/stefanprodan/podinfo
+  org.opencontainers.image.title: podinfo
+  org.opencontainers.image.version: 6.7.0
+annotations:
+  org.opencontainers.image.base.name: alpine:3.20
+author: Stefan Prodan
+user: app
+workingDir: /home/app
+stopSignal: SIGTERM
+entrypoint:
+  - ./podinfo
+cmd:
+  - --port=9898
+# Recorded only when nodestatd runs with IMAGES_RECORD_ENV=true.
+env:
+  - PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+exposedPorts:
+  - 9797/tcp
+  - 9898/tcp
+  - 9999/tcp
+volumes:
+  - /data
+# created is hoisted the same way when all manifests share it; these were
+# built separately, so each manifest keeps its own.
+
+# Platform manifests the nodes hold, keyed by digest.
+manifests:
+  - digest: sha256:0060e4fc3052c383ea920673d08388fd6aa3bfc3536932f7c08edd4e4a616520
+    mediaType: application/vnd.oci.image.manifest.v1+json
+    # The image ID the CRI reports.
+    configDigest: sha256:5d2143482a463e606b03c1297d637f46836e95cdbfffed9591779031001100f8
+    architecture: amd64
+    created: "2024-06-23T18:30:51Z"
+    # Labels and annotations merge key by key with the top-level maps.
+    labels:
+      org.opencontainers.image.created: "2024-06-23T18:28:58Z"
+    annotations:
+      org.opencontainers.image.base.digest: sha256:4876fdea29cac1a33a3195f1eb1952feb1fca7dd6dd00be3e2f1879cf20d34d2
+    layers:
+      - digest: sha256:ec99f8b99825a742d50fb3ce173d291378a46ab54b8ef7dd75e5654e2a296e99
+        diffID: sha256:94e5f06ff8e3d4441dc3cd8b090ff38dc911bfa8ebdb0dc28395bc98f82f983f
+        mediaType: application/vnd.oci.image.layer.v1.tar+gzip
+        size: 3623844
+      - digest: sha256:9fe72c6f89a723957e2bbc71c872d07a59f85ed96e1590727e2d3a179e872930
+        diffID: sha256:8d924caab90ed974e91f29bbe02218d2a8595e3f2a24affdeb4272bddf9c7b47
+        mediaType: application/vnd.oci.image.layer.v1.tar+gzip
+        size: 2593853
+    size: 6219319
+  - digest: sha256:53d266d18dcd714920b0aed2c54b55d85bbf38ff59b931b4d6f6b6aca0da7e7d
+    mediaType: application/vnd.oci.image.manifest.v1+json
+    configDigest: sha256:7ea1fd69fa1ed461175df36f4e9740f4d742108cdffbdfdcd12d737f2cff184d
+    architecture: arm64
+    # Present when the platform has one, such as arm/v7.
+    variant: v8
+    created: "2024-06-23T18:31:07Z"
+    labels:
+      org.opencontainers.image.created: "2024-06-23T18:29:12Z"
+    annotations:
+      org.opencontainers.image.base.digest: sha256:6a0657acfef760bd9e293361c9b558e98e7d740ed0dffca823d17098a4ffddf5
+    layers:
+      - digest: sha256:a258b2a6b59a7aa244d8ceab095c7f8df726f27075a69fca7ad8490f3f63148a
+        diffID: sha256:518cfe2a9d3ab835f77e061fb2e90e3e018d05032264afc0d4c3ddacfbd2db4e
+        mediaType: application/vnd.oci.image.layer.v1.tar+gzip
+        size: 4088800
+      - digest: sha256:76bbc531cd1771155fe1b2822cdd6cc2e51223af84666bf80fb9d826ccb06d5c
+        diffID: sha256:92e56b27d22d7f3712be34b8bdd605331005a5921a8eb50c8b08c51c08abd620
+        mediaType: application/vnd.oci.image.layer.v1.tar+gzip
+        size: 2615823
+    size: 6706189
+
+# Every reference the image is held under on any node.
+repoTags:
+  - ghcr.io/stefanprodan/podinfo:6.7.0
+  - ghcr.io/stefanprodan/podinfo:latest
+repoDigests:
+  - ghcr.io/stefanprodan/podinfo@sha256:d2b3cd93a48acdc91327533ce28fcb3169b2d9feaf73817dc2eb68858df64edb
+
+nodes:
+  # Holds the amd64 manifest under every top-level reference, so manifests,
+  # repoTags and repoDigests are inherited.
+  - name: worker-1
+    pulledAt: "2026-10-22T11:02:41Z"
+    # containerd reports the image pinned on this node, whoever pinned it.
+    pinned: true
+  # Holds only one tag, so its references are listed; an empty list means
+  # the node holds the image under no references of that kind.
+  - name: worker-2
+    manifests:
+      - sha256:0060e4fc3052c383ea920673d08388fd6aa3bfc3536932f7c08edd4e4a616520
+    repoTags:
+      - ghcr.io/stefanprodan/podinfo:6.7.0
+    repoDigests: []
+    pulledAt: "2026-10-22T09:04:54Z"
+    # No container on the node references the image, running or exited.
+    unused: true
+  - name: arm-1
+    manifests:
+      - sha256:53d266d18dcd714920b0aed2c54b55d85bbf38ff59b931b4d6f6b6aca0da7e7d
+    pulledAt: "2026-10-23T08:44:01Z"
+    unused: true

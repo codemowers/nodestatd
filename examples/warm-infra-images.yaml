@@ -1,0 +1,51 @@
+# Keeps infrastructure images warm and pinned on every node, so pods evicted
+# during a drain start without pulling. Sets spec.pin on ContainerImages of
+# matching repositories where it is unset; explicit settings on an object win. Repositories are matched by organization prefix,
+# also behind a registry mirror such as zot.example.com/quay.io/jetstack/.
+apiVersion: admissionregistration.k8s.io/v1
+kind: MutatingAdmissionPolicy
+metadata:
+  name: warm-infra-images
+spec:
+  # Admission problems must not block nodestatd from recording images.
+  failurePolicy: Ignore
+  reinvocationPolicy: Never
+  matchConstraints:
+    resourceRules:
+      - apiGroups: ["codemowers.cloud"]
+        apiVersions: ["v1alpha1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["containerimages"]
+  matchConditions:
+    - name: infra-image
+      expression: >-
+        (object.?repoTags.orValue([]) + object.?repoDigests.orValue([])).exists(ref, [
+          'docker.io/rancher/',
+          'docker.io/traefik/',
+          'docker.io/library/traefik:',
+          'docker.io/library/traefik@',
+          'quay.io/jetstack/',
+          'quay.io/cilium/',
+          'quay.io/prometheus-operator/',
+          'ghcr.io/cloudnative-pg/',
+          'ghcr.io/topolvm/',
+          'ghcr.io/project-zot/',
+          'ghcr.io/passmower/',
+          'registry.k8s.io/kube-state-metrics/'
+        ].exists(prefix, ref.startsWith(prefix) || ref.contains('/' + prefix)))
+    - name: unset
+      expression: "!has(object.spec) || !has(object.spec.pin)"
+  mutations:
+    - patchType: JSONPatch
+      jsonPatch:
+        expression: >-
+          (has(object.spec) ? [] : [JSONPatch{op: "add", path: "/spec", value: {}}]) +
+          [JSONPatch{op: "add", path: "/spec/pin", value: {"policy": "WhileInUse"}},
+           JSONPatch{op: "add", path: "/spec/pin/warm", value: true}]
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: MutatingAdmissionPolicyBinding
+metadata:
+  name: warm-infra-images
+spec:
+  policyName: warm-infra-images

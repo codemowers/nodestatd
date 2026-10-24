@@ -1,0 +1,8 @@
+# Deny by default: only build inputs enter the Docker context.
+**
+!go.mod
+!go.sum
+!cmd/
+!cmd/**/*.go
+!internal/
+!internal/**/*.go

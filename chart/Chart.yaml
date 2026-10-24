@@ -1,0 +1,7 @@
+apiVersion: v2
+name: nodestatd
+version: 0.1.0
+# Release builds set version and appVersion from the Git tag.
+appVersion: latest
+type: application
+description: DaemonSet reporting Kubernetes node state, starting with containerd images as ContainerImage objects

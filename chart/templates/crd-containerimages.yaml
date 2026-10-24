@@ -1,0 +1,341 @@
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: containerimages.codemowers.cloud
+spec:
+  group: codemowers.cloud
+  scope: Cluster
+  names:
+    kind: ContainerImage
+    listKind: ContainerImageList
+    plural: containerimages
+    singular: containerimage
+    shortNames:
+      - cimg
+  versions:
+    - name: v1alpha1
+      served: true
+      storage: true
+      additionalPrinterColumns:
+        - name: Image
+          type: string
+          jsonPath: .status.image
+        - name: Source
+          type: string
+          jsonPath: .status.source
+        - name: Unused
+          type: boolean
+          jsonPath: .status.unused
+        - name: Pin
+          type: string
+          jsonPath: .spec.pin.policy
+        - name: Warm
+          type: boolean
+          jsonPath: .spec.pin.warm
+        - name: Created
+          type: date
+          jsonPath: .created
+        - name: Age
+          type: date
+          jsonPath: .metadata.creationTimestamp
+        - name: Size
+          type: integer
+          jsonPath: .manifests[0].size
+          priority: 1
+      schema:
+        openAPIV3Schema:
+          description: >-
+            An image pulled onto cluster nodes, named after the digest it was
+            pulled by (sha256-<hex>): the image index for multi-platform
+            images, otherwise the platform manifest. Platform manifests the
+            nodes hold are merged into manifests. The object is stored
+            compactly: manifest fields every manifest shares are kept once at
+            the top level and are absent from the manifests, and node entries
+            list references only when they differ from the top-level union.
+            Absent fields inherit the top-level value. Records what node image
+            stores hold, not what pods run.
+          type: object
+          properties:
+            apiVersion:
+              type: string
+            kind:
+              type: string
+            metadata:
+              type: object
+            spec:
+              description: User intent; nodestatd preserves it when updating the object.
+              type: object
+              properties:
+                source:
+                  description: Source repository URL overriding the one derived from image metadata.
+                  type: string
+                pin:
+                  description: >-
+                    Keep the image on nodes, exempt from kubelet image garbage
+                    collection. nodestatd marks records it pins with the
+                    codemowers.cloud/pinned label and releases only those pins
+                    when the policy stops keeping the image or pin is removed;
+                    pins from containerd's configuration, k3s image import or
+                    manual tooling are left alone.
+                  type: object
+                  required:
+                    - policy
+                  properties:
+                    policy:
+                      description: >-
+                        Always pins unconditionally; WhileInUse pins while any
+                        node uses the image and for gracePeriod after the last
+                        use ends.
+                      type: string
+                      enum: [Always, WhileInUse]
+                    gracePeriod:
+                      description: >-
+                        How long WhileInUse keeps the image after it stops
+                        being used anywhere, as a Go duration such as 24h.
+                        Defaults to nodestatd's setting.
+                      type: string
+                      pattern: '^([0-9]+(\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$'
+                    nodeSelector:
+                      description: >-
+                        Limits the nodes the policy applies to; all nodes when
+                        absent. Nodes whose architecture the image lacks are
+                        skipped.
+                      type: object
+                      additionalProperties:
+                        type: string
+                    warm:
+                      description: >-
+                        Also pull the image onto selected nodes that lack it
+                        while the policy keeps it.
+                      type: boolean
+            status:
+              description: Summary nodestatd derives from the observed fields.
+              type: object
+              properties:
+                image:
+                  description: First repository tag, otherwise the first digest reference.
+                  type: string
+                source:
+                  description: >-
+                    spec.source, otherwise the repository from shared image
+                    metadata: the org.opencontainers.image.source annotation or
+                    label, org.label-schema.vcs-url, source_repository, or a code
+                    forge org.opencontainers.image.url.
+                  type: string
+                unused:
+                  description: Set when no container on any listed node references the image.
+                  type: boolean
+            labels:
+              description: Config labels shared by every manifest.
+              type: object
+              additionalProperties:
+                type: string
+            annotations:
+              description: Manifest annotations shared by every manifest.
+              type: object
+              additionalProperties:
+                type: string
+            author:
+              type: string
+            created:
+              type: string
+              format: date-time
+            user:
+              type: string
+            workingDir:
+              type: string
+            stopSignal:
+              type: string
+            entrypoint:
+              type: array
+              items:
+                type: string
+            cmd:
+              type: array
+              items:
+                type: string
+            env:
+              description: Config environment; recorded only when nodestatd enables it.
+              type: array
+              items:
+                type: string
+            exposedPorts:
+              type: array
+              items:
+                type: string
+            volumes:
+              type: array
+              items:
+                type: string
+            index:
+              description: Image index the object is named after; absent for single-platform pulls.
+              type: object
+              required:
+                - digest
+              properties:
+                digest:
+                  type: string
+                mediaType:
+                  type: string
+                annotations:
+                  type: object
+                  additionalProperties:
+                    type: string
+                platforms:
+                  description: Linux platform manifests the index lists, excluding attestations.
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      digest:
+                        type: string
+                      mediaType:
+                        type: string
+                      architecture:
+                        type: string
+                      variant:
+                        type: string
+            manifests:
+              description: >-
+                Platform manifests held by the listed nodes. Labels and
+                annotations are merged key by key with the top-level maps;
+                other absent fields inherit the top-level value.
+              type: array
+              x-kubernetes-list-type: map
+              x-kubernetes-list-map-keys:
+                - digest
+              items:
+                type: object
+                required:
+                  - digest
+                properties:
+                  digest:
+                    type: string
+                  mediaType:
+                    type: string
+                  configDigest:
+                    description: Image ID as reported by the CRI.
+                    type: string
+                  architecture:
+                    type: string
+                  variant:
+                    type: string
+                  created:
+                    type: string
+                    format: date-time
+                  author:
+                    type: string
+                  labels:
+                    description: Image config labels.
+                    type: object
+                    additionalProperties:
+                      type: string
+                  annotations:
+                    description: Manifest annotations.
+                    type: object
+                    additionalProperties:
+                      type: string
+                  user:
+                    type: string
+                  workingDir:
+                    type: string
+                  stopSignal:
+                    type: string
+                  entrypoint:
+                    type: array
+                    items:
+                      type: string
+                  cmd:
+                    type: array
+                    items:
+                      type: string
+                  env:
+                    description: Config environment; recorded only when nodestatd enables it.
+                    type: array
+                    items:
+                      type: string
+                  exposedPorts:
+                    type: array
+                    items:
+                      type: string
+                  volumes:
+                    type: array
+                    items:
+                      type: string
+                  layers:
+                    description: Manifest layers in order.
+                    type: array
+                    items:
+                      type: object
+                      required:
+                        - digest
+                      properties:
+                        digest:
+                          description: Compressed layer digest as stored in registries.
+                          type: string
+                        diffID:
+                          description: Uncompressed layer digest from the config rootfs.
+                          type: string
+                        mediaType:
+                          type: string
+                        size:
+                          description: Compressed size in bytes.
+                          type: integer
+                          format: int64
+                  size:
+                    description: Compressed size of config and layers in bytes.
+                    type: integer
+                    format: int64
+            repoTags:
+              description: Union of the tags the listed nodes hold the image under.
+              type: array
+              x-kubernetes-list-type: set
+              items:
+                type: string
+            repoDigests:
+              description: Union of the digest references the listed nodes hold the image under.
+              type: array
+              x-kubernetes-list-type: set
+              items:
+                type: string
+            nodes:
+              description: Nodes whose image store holds this image.
+              type: array
+              x-kubernetes-list-type: map
+              x-kubernetes-list-map-keys:
+                - name
+              items:
+                type: object
+                required:
+                  - name
+                properties:
+                  name:
+                    type: string
+                  manifests:
+                    description: Digests of the platform manifests the node holds; absent when it holds all of them.
+                    type: array
+                    items:
+                      type: string
+                  repoTags:
+                    description: The node's tags when they differ from the top-level union; may be empty.
+                    type: array
+                    items:
+                      type: string
+                  repoDigests:
+                    description: The node's digest references when they differ from the top-level union; may be empty.
+                    type: array
+                    items:
+                      type: string
+                  unused:
+                    description: Set when no container on the node, running or exited, references the image.
+                    type: boolean
+                  pinned:
+                    description: >-
+                      Set when containerd on the node reports the image pinned
+                      (io.cri-containerd.pinned), exempting it from kubelet
+                      image garbage collection, whoever set the pin.
+                    type: boolean
+                  pulledAt:
+                    description: Earliest creation time of the node's containerd records for the image.
+                    type: string
+                    format: date-time

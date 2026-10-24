@@ -1,0 +1,37 @@
+apiVersion: skaffold/v3
+kind: Config
+metadata:
+  name: nodestatd
+
+build:
+  local:
+    useBuildkit: true
+    push: true
+  artifacts:
+    - image: nodestatd
+      platforms:
+        - linux/amd64
+      docker:
+        dockerfile: Dockerfile
+
+deploy:
+  # Cluster, namespace and registry come from skaffold.env or exported variables.
+  kubectl:
+    flags:
+      # Keep labeled chart resources when Skaffold cleans up.
+      delete:
+        - --selector=skaffold.dev/keep!=true
+
+manifests:
+  helm:
+    releases:
+      - name: nodestatd
+        chartPath: chart
+        skipBuildDependencies: true
+        setValues:
+          # Development clusters run k3s.
+          containerd.socket: /run/k3s/containerd/containerd.sock
+          # The development image is built for amd64 only.
+          nodeSelector.kubernetes\.io/arch: amd64
+        setValueTemplates:
+          image: "{{.IMAGE_FULLY_QUALIFIED_nodestatd}}"

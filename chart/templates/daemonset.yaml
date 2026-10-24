@@ -1,0 +1,90 @@
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: nodestatd
+  namespace: {{ .Release.Namespace | quote }}
+  labels:
+    app: nodestatd
+spec:
+  selector:
+    matchLabels:
+      app: nodestatd
+  updateStrategy:
+    rollingUpdate:
+      maxUnavailable: 25%
+  template:
+    metadata:
+      labels:
+        app: nodestatd
+    spec:
+      serviceAccountName: nodestatd
+      priorityClassName: system-node-critical
+      terminationGracePeriodSeconds: 10
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: nodestatd
+          image: {{ .Values.image | default (printf "ghcr.io/codemowers/nodestatd:%s" .Chart.AppVersion) | quote }}
+          securityContext:
+            # The containerd socket is owned by root; no capabilities are needed.
+            runAsUser: 0
+            runAsGroup: 0
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            seccompProfile:
+              type: RuntimeDefault
+          env:
+            - name: NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+            - name: CONTAINERD_ADDRESS
+              value: /run/containerd/containerd.sock
+            - name: CONTAINERD_NAMESPACE
+              value: {{ .Values.containerd.namespace | quote }}
+            - name: LOG_LEVEL
+              value: {{ .Values.logLevel | quote }}
+            - name: HEALTH_ADDR
+              value: ":5281"
+            - name: ENABLE_IMAGES
+              value: {{ .Values.images.enabled | quote }}
+            {{- if .Values.images.enabled }}
+            - name: IMAGES_RESYNC_INTERVAL
+              value: {{ .Values.images.resyncInterval | quote }}
+            - name: IMAGES_RECORD_ENV
+              value: {{ .Values.images.recordEnv | quote }}
+            {{- end }}
+          ports:
+            # Shared with the metrics endpoint once netstatd merges in.
+            - containerPort: 5281
+              name: health
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: health
+            periodSeconds: 30
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: health
+            periodSeconds: 10
+          {{- with .Values.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          volumeMounts:
+            - name: containerd-socket
+              mountPath: /run/containerd/containerd.sock
+      volumes:
+        - name: containerd-socket
+          hostPath:
+            path: {{ .Values.containerd.socket | quote }}
+            type: Socket

@@ -1,0 +1,34 @@
+# Defaults to ghcr.io/codemowers/nodestatd tagged with the chart's appVersion,
+# which release builds set from the Git tag. Skaffold overrides this with its
+# built artifact for local development.
+image: ""
+
+# Shared by all modules.
+containerd:
+  # Host path of the containerd socket; also the default on Talos.
+  socket: /run/containerd/containerd.sock
+  namespace: k8s.io
+
+# Records the node's containerd images as ContainerImage objects.
+images:
+  enabled: true
+  # Full reconciliation interval; containerd events trigger incremental syncs.
+  resyncInterval: 1h
+  # Image config environment variables can contain credentials baked into
+  # images and become readable to anyone who can read ContainerImages.
+  recordEnv: false
+
+logLevel: info
+
+resources:
+  requests:
+    cpu: 10m
+    memory: 32Mi
+  limits:
+    memory: 128Mi
+
+nodeSelector: {}
+
+# Run on every node, including tainted control-plane nodes.
+tolerations:
+  - operator: Exists
