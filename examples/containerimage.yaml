@@ -44,6 +44,7 @@ spec:
 status:
   image: ghcr.io/stefanprodan/podinfo:6.7.0
   source: https://github.com/stefanprodan/podinfo
+  version: 6.7.0
   # Set only when no listed node uses the image; worker-1 runs it, so in this
   # object it would be absent. Shown here for completeness.
   unused: true

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/url"
 	"reflect"
+	"regexp"
 	"slices"
 	"sort"
 	stdstrings "strings"
@@ -238,7 +239,7 @@ var forges = map[string]int{"github.com": 2, "codeberg.org": 2, "bitbucket.org":
 
 // derive sets status: the image reference, preferring tags over digest
 // references, the source repository, preferring specSource over image
-// metadata, and whether no node uses the image.
+// metadata, the version and whether no node uses the image.
 func derive(data map[string]any, specSource string) {
 	status := map[string]any{}
 	for _, key := range []string{"repoTags", "repoDigests"} {
@@ -257,12 +258,66 @@ func derive(data map[string]any, specSource string) {
 		source = normalizeSource(raw, candidate.forgeOnly)
 	}
 	setString(status, "source", source)
+	setString(status, "version", imageVersion(data))
 	if allNodes(data, "unused") {
 		status["unused"] = true
 	}
 	if len(status) > 0 {
 		data["status"] = status
 	}
+}
+
+// versionPattern matches version-like values such as v1.16.1, 1.27 or
+// 1.27.3-alpine, but not latest, main or commit hashes.
+var versionPattern = regexp.MustCompile(`^v?[0-9]+(\.[0-9]+)*([-+_][0-9A-Za-z.+_-]*)?$`)
+
+// versionLabels refine a version-like tag, such as 1.27 to 1.27.3.
+var versionLabels = []string{"org.opencontainers.image.version", "org.label-schema.version"}
+
+// imageVersion returns the image's version as published: the
+// org.opencontainers.image.version manifest annotation, which is not
+// inherited, otherwise a version label that agrees with one of the image's
+// version-like tags, otherwise the most specific such tag. Config labels are
+// often inherited from a base image, so a label alone never sets the version.
+func imageVersion(data map[string]any) string {
+	annotations, _ := data["annotations"].(map[string]any)
+	if value, _ := annotations["org.opencontainers.image.version"].(string); versionPattern.MatchString(value) {
+		return value
+	}
+	var tags []string
+	for _, item := range slice(data["repoTags"]) {
+		ref, _ := item.(string)
+		if i := stdstrings.LastIndex(ref, ":"); i > stdstrings.LastIndex(ref, "/") && versionPattern.MatchString(ref[i+1:]) {
+			tags = append(tags, ref[i+1:])
+		}
+	}
+	labels, _ := data["labels"].(map[string]any)
+	for _, key := range versionLabels {
+		value, _ := labels[key].(string)
+		if versionPattern.MatchString(value) && slices.ContainsFunc(tags, func(tag string) bool { return sameVersion(value, tag) }) {
+			return value
+		}
+	}
+	// More dot-separated components are more specific: 1.27.3 over 1.27.
+	slices.SortStableFunc(tags, func(a, b string) int {
+		return stdstrings.Count(b, ".") - stdstrings.Count(a, ".")
+	})
+	if len(tags) > 0 {
+		return tags[0]
+	}
+	return ""
+}
+
+// sameVersion reports whether a metadata version and a tag name the same
+// release, such as 1.27.3 and v1.27.3, 1.27.3-alpine or 1.27.
+func sameVersion(value, tag string) bool {
+	value, tag = stdstrings.TrimPrefix(value, "v"), stdstrings.TrimPrefix(tag, "v")
+	for _, sep := range []string{"", "-", "+", "_"} {
+		if tag == value+sep || (sep != "" && stdstrings.HasPrefix(tag, value+sep)) {
+			return true
+		}
+	}
+	return stdstrings.HasPrefix(value, tag+".") || stdstrings.HasPrefix(value, tag+"-")
 }
 
 // allNodes reports whether every node entry sets flag.

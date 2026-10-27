@@ -214,6 +214,32 @@ func TestDeriveSource(t *testing.T) {
 	}
 }
 
+func TestDeriveVersion(t *testing.T) {
+	labels := func(version string) map[string]any {
+		return map[string]any{"org.opencontainers.image.version": version}
+	}
+	for _, tc := range []struct {
+		name    string
+		data    map[string]any
+		version string
+	}{
+		{"annotation beats label", map[string]any{"annotations": labels("v1.16.1"), "labels": labels("24.04")}, "v1.16.1"},
+		{"label consistent with tag", map[string]any{"labels": labels("1.27.3"), "repoTags": []any{"docker.io/library/nginx:1.27-alpine", "docker.io/library/nginx:1.27.3-alpine"}}, "1.27.3"},
+		{"label consistent with floating tag", map[string]any{"labels": labels("1.27.3"), "repoTags": []any{"docker.io/library/nginx:1.27"}}, "1.27.3"},
+		{"inherited label loses to tag", map[string]any{"labels": labels("24.04"), "repoTags": []any{"example/app:v2.1.0"}}, "v2.1.0"},
+		{"most specific tag", map[string]any{"repoTags": []any{"example/app:1", "example/app:1.2.3", "example/app:1.2", "example/app:latest"}}, "1.2.3"},
+		{"label-schema", map[string]any{"labels": map[string]any{"org.label-schema.version": "7.10.2"}, "repoTags": []any{"example/app:7.10"}}, "7.10.2"},
+		{"label without version tag", map[string]any{"labels": labels("0.1.0"), "repoTags": []any{"example/app:sha-00cde6b"}}, ""},
+		{"registry port is not a tag", map[string]any{"repoTags": []any{"registry.local:5000/app"}}, ""},
+		{"non-version values ignored", map[string]any{"labels": labels("main"), "repoTags": []any{"example/app:latest", "example/app:sha-1a2b3c"}}, ""},
+	} {
+		derive(tc.data, "")
+		if got, _ := status(tc.data)["version"].(string); got != tc.version {
+			t.Errorf("%s: version = %q, want %q", tc.name, got, tc.version)
+		}
+	}
+}
+
 func TestDeriveIgnoresPins(t *testing.T) {
 	data := map[string]any{"nodes": []any{map[string]any{"name": "a", "pinned": true}}}
 	derive(data, "")

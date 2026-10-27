@@ -47,13 +47,24 @@ nodestatd sets carry its own `codemowers.io/pinned` label, and it only ever
 removes those. Only Linux platforms are recorded.
 
 `status` summarizes the object for printer columns: `image` (first tag,
-otherwise first digest reference), `source` and `unused`. `status.source` is
-`spec.source` when set, otherwise the first of the
+otherwise first digest reference), `source`, `version` and `unused`.
+`status.source` is `spec.source` when set, otherwise the first of the
 `org.opencontainers.image.source` manifest annotation or label,
 `org.label-schema.vcs-url`, `source_repository`, or an
 `org.opencontainers.image.url` on a code forge, normalized to the repository
 URL. Annotations come first because labels are more often inherited from base
 images; `spec.source` corrects values inherited either way.
+
+`status.version` is the version as published, such as `v1.16.1`: the
+`org.opencontainers.image.version` manifest annotation, otherwise an
+`org.opencontainers.image.version` or `org.label-schema.version` label that
+agrees with a version-like tag (`1.27.3` agrees with `1.27`, `v1.27.3` and
+`1.27.3-alpine`), otherwise the most specific such tag. Config labels are often
+inherited from base images, so a label never sets the version alone; images
+tagged only `latest`, branches or commits have none. `status.source` and
+`status.version` are selectable fields, so
+`kubectl get cimg --field-selector status.source=<url>` lists the versions of
+a source deployed on nodes.
 
 nodestatd updates objects by read-modify-write with resourceVersion
 preconditions, retrying on conflict. Each instance expands the object, replaces

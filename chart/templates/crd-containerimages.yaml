@@ -20,6 +20,9 @@ spec:
         - name: Image
           type: string
           jsonPath: .status.image
+        - name: Version
+          type: string
+          jsonPath: .status.version
         - name: Source
           type: string
           jsonPath: .status.source
@@ -42,6 +45,9 @@ spec:
           type: integer
           jsonPath: .manifests[0].size
           priority: 1
+      selectableFields:
+        - jsonPath: .status.source
+        - jsonPath: .status.version
       schema:
         openAPIV3Schema:
           description: >-
@@ -121,6 +127,16 @@ spec:
                     metadata: the org.opencontainers.image.source annotation or
                     label, org.label-schema.vcs-url, source_repository, or a code
                     forge org.opencontainers.image.url.
+                  type: string
+                version:
+                  description: >-
+                    Version as published, such as v1.16.1 or 1.27.3: the
+                    org.opencontainers.image.version manifest annotation,
+                    otherwise an org.opencontainers.image.version or
+                    org.label-schema.version label agreeing with a version-like
+                    tag, otherwise the most specific such tag. Labels can be
+                    inherited from base images and never set it alone. Absent
+                    for images tagged only latest, branches or commits.
                   type: string
                 unused:
                   description: Set when no container on any listed node references the image.
