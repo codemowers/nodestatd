@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"reflect"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/codemowers/nodestatd/internal/images/inventory"
@@ -20,8 +21,18 @@ import (
 )
 
 func newClient(objects ...runtime.Object) *dynamicfake.FakeDynamicClient {
-	return dynamicfake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(),
-		map[schema.GroupVersionResource]string{Resource: Kind + "List"}, objects...)
+	client := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(), map[schema.GroupVersionResource]string{
+		Resource:                 Kind + "List",
+		ImageRepositoryResource:  "ImageRepositoryList",
+		SourceRepositoryResource: "SourceRepositoryList",
+	}, objects...)
+	// The fake tracker assigns no UIDs, which owner references need.
+	client.PrependReactor("create", "*", func(action k8stesting.Action) (bool, runtime.Object, error) {
+		obj := action.(k8stesting.CreateAction).GetObject().(*unstructured.Unstructured)
+		obj.SetUID(types.UID("uid-" + obj.GetName()))
+		return false, nil, nil
+	})
+	return client
 }
 
 func newPublisher(client *dynamicfake.FakeDynamicClient, node string, registered ...string) *Publisher {
@@ -37,7 +48,12 @@ func newPublisher(client *dynamicfake.FakeDynamicClient, node string, registered
 
 func get(t *testing.T, client *dynamicfake.FakeDynamicClient, name string) *unstructured.Unstructured {
 	t.Helper()
-	obj, err := client.Resource(Resource).Get(context.Background(), name, metav1.GetOptions{})
+	return getResource(t, client, Resource, name)
+}
+
+func getResource(t *testing.T, client *dynamicfake.FakeDynamicClient, resource schema.GroupVersionResource, name string) *unstructured.Unstructured {
+	t.Helper()
+	obj, err := client.Resource(resource).Get(context.Background(), name, metav1.GetOptions{})
 	if err != nil {
 		t.Fatalf("get %s: %v", name, err)
 	}
@@ -185,7 +201,7 @@ func TestDerive(t *testing.T) {
 	data["repoTags"] = []any{"example/app:1.0"}
 	derive(data, "https://github.com/example/fork")
 	if status(data)["image"] != "example/app:1.0" || status(data)["source"] != "https://github.com/example/fork" {
-		t.Errorf("tags and spec.source must win: %v", status(data))
+		t.Errorf("tags and the override must win: %v", status(data))
 	}
 }
 
@@ -199,8 +215,9 @@ func TestDeriveSource(t *testing.T) {
 			"annotations": map[string]any{"org.opencontainers.image.source": "https://github.com/docker-library/python.git#688a0b86:3.11/slim-trixie"},
 			"labels":      map[string]any{"org.opencontainers.image.source": "https://github.com/GoogleContainerTools/distroless"},
 		}, "https://github.com/docker-library/python"},
-		{"label-schema", map[string]any{"labels": map[string]any{"org.label-schema.vcs-url": "https://github.com/opensearch-project/OpenSearch"}}, "https://github.com/opensearch-project/OpenSearch"},
+		{"label-schema", map[string]any{"labels": map[string]any{"org.label-schema.vcs-url": "https://github.com/opensearch-project/OpenSearch/"}}, "https://github.com/opensearch-project/opensearch"},
 		{"source_repository", map[string]any{"labels": map[string]any{"source_repository": "git@github.com:sapcc/mosquitto-exporter.git"}}, "https://github.com/sapcc/mosquitto-exporter"},
+		{"gitlab case folded", map[string]any{"labels": map[string]any{"org.opencontainers.image.source": "https://GitLab.com/Group/Project.git"}}, "https://gitlab.com/group/project"},
 		{"forge url trimmed", map[string]any{"annotations": map[string]any{"org.opencontainers.image.url": "https://github.com/osscontainertools/kaniko/actions/runs/1"}}, "https://github.com/osscontainertools/kaniko"},
 		{"gitlab subgroup", map[string]any{"labels": map[string]any{"org.opencontainers.image.url": "https://gitlab.com/group/sub/project/-/tree/main"}}, "https://gitlab.com/group/sub/project"},
 		{"non-forge url ignored", map[string]any{"labels": map[string]any{"org.opencontainers.image.url": "https://hub.docker.com/_/python", "org.label-schema.url": "https://opensearch.org"}}, ""},
@@ -270,7 +287,7 @@ func TestUpdatePreservesSpec(t *testing.T) {
 		t.Fatal(err)
 	}
 	obj := get(t, client, "sha256-abc")
-	obj.Object["spec"] = map[string]any{"source": "https://github.com/example/app", "pin": map[string]any{"policy": "WhileInUse"}}
+	obj.Object["spec"] = map[string]any{"pin": map[string]any{"policy": "WhileInUse"}}
 	if _, err := client.Resource(Resource).Update(ctx, obj, metav1.UpdateOptions{}); err != nil {
 		t.Fatal(err)
 	}
@@ -279,7 +296,7 @@ func TestUpdatePreservesSpec(t *testing.T) {
 		t.Fatal(err)
 	}
 	obj = get(t, client, "sha256-abc")
-	if policy, _, _ := unstructured.NestedString(obj.Object, "spec", "pin", "policy"); policy != "WhileInUse" || status(obj.Object)["source"] != "https://github.com/example/app" || status(obj.Object)["image"] != "example/app:v2" {
+	if policy, _, _ := unstructured.NestedString(obj.Object, "spec", "pin", "policy"); policy != "WhileInUse" || status(obj.Object)["image"] != "example/app:v2" {
 		t.Errorf("object = %v", obj.Object)
 	}
 }
@@ -455,5 +472,141 @@ func TestUpdateRetriesConflicts(t *testing.T) {
 	}
 	if got := entryNodes(get(t, client, "sha256-abc")); !slices.Equal(got, []string{"node-a", "node-b"}) {
 		t.Errorf("nodes = %v", got)
+	}
+}
+
+func TestAggregateName(t *testing.T) {
+	for identity, want := range map[string]string{
+		"https://github.com/cert-manager/cert-manager": "cert-manager-c311baa7dd",
+		"https://github.com/grafana/loki_exporter":     "loki-exporter-b0f3814e06",
+		"https://git.example.org/ops.team/socket.io":   "socket-io-d05e44ef5f",
+		"https://gitlab.com/cilium/cilium":             "cilium-029457b09e",
+		"https://example.com":                          "example-com-100680ad54",
+		"docker.io/library/___":                        "repo-",
+		"quay.io/jetstack/" + strings.Repeat("a", 70):  strings.Repeat("a", 52) + "-",
+	} {
+		got := AggregateName(identity)
+		if !strings.HasPrefix(got, want) || len(got) > 63 || (strings.HasSuffix(want, "-") && len(got) != len(want)+10) {
+			t.Errorf("AggregateName(%q) = %q, want %q", identity, got, want)
+		}
+	}
+}
+
+func TestImageRepository(t *testing.T) {
+	for ref, want := range map[string]string{
+		"docker.io/library/nginx:1.27": "docker.io/library/nginx",
+		"nginx":                        "docker.io/library/nginx",
+		"index.docker.io/traefik/whoami@sha256:abc":                        "docker.io/traefik/whoami",
+		"registry.local:5000/team/app:v1":                                  "registry.local:5000/team/app",
+		"localhost/app":                                                    "localhost/app",
+		"quay.io/jetstack/cert-manager-controller:v1.16.1":                 "quay.io/jetstack/cert-manager-controller",
+		"zot.example.com/quay.io/jetstack/cert-manager-webhook@sha256:abc": "zot.example.com/quay.io/jetstack/cert-manager-webhook",
+	} {
+		if got := ImageRepository(ref); got != want {
+			t.Errorf("ImageRepository(%q) = %q, want %q", ref, got, want)
+		}
+	}
+}
+
+func listNames(t *testing.T, client *dynamicfake.FakeDynamicClient, resource schema.GroupVersionResource) map[string][]string {
+	t.Helper()
+	list, err := client.Resource(resource).List(context.Background(), metav1.ListOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	owners := map[string][]string{}
+	for _, obj := range list.Items {
+		owned := []string{}
+		for _, ref := range obj.GetOwnerReferences() {
+			owned = append(owned, ref.Name)
+		}
+		owners[obj.GetName()] = owned
+	}
+	return owners
+}
+
+func sourced(digest, source string, tags ...string) *inventory.Image {
+	return &inventory.Image{Digest: digest, RepoTags: tags,
+		Manifests: []inventory.Manifest{manifest(digest, "amd64", map[string]string{"org.opencontainers.image.source": source})}}
+}
+
+func TestRepositoriesFollowImages(t *testing.T) {
+	ctx := context.Background()
+	client := newClient()
+	a := newPublisher(client, "node-a", "node-a")
+	const source = "https://github.com/cert-manager/cert-manager"
+	controller := sourced("sha256:controller", source, "quay.io/jetstack/cert-manager-controller:v1.16.1")
+	webhook := sourced("sha256:webhook", source, "quay.io/jetstack/cert-manager-webhook:v1.16.1", "zot.example.com/quay.io/jetstack/cert-manager-webhook:v1.16.1")
+	if err := a.Resync(ctx, map[string]*inventory.Image{controller.Digest: controller, webhook.Digest: webhook}); err != nil {
+		t.Fatal(err)
+	}
+	controllerRepo := AggregateName("quay.io/jetstack/cert-manager-controller")
+	webhookRepo := AggregateName("quay.io/jetstack/cert-manager-webhook")
+	mirrorRepo := AggregateName("zot.example.com/quay.io/jetstack/cert-manager-webhook")
+	sourceRepo := AggregateName(source)
+	if got, want := listNames(t, client, ImageRepositoryResource), map[string][]string{
+		controllerRepo: {"sha256-controller"},
+		webhookRepo:    {"sha256-webhook"},
+		mirrorRepo:     {"sha256-webhook"},
+	}; !reflect.DeepEqual(got, want) {
+		t.Errorf("image repositories = %v, want %v", got, want)
+	}
+	if got, want := listNames(t, client, SourceRepositoryResource), map[string][]string{sourceRepo: {"sha256-controller", "sha256-webhook"}}; !reflect.DeepEqual(got, want) {
+		t.Errorf("source repositories = %v, want %v", got, want)
+	}
+	repo := getResource(t, client, ImageRepositoryResource, controllerRepo)
+	if nestedString(repo.Object, "spec", "repository") != "quay.io/jetstack/cert-manager-controller" || repo.GetOwnerReferences()[0].UID != "uid-sha256-controller" {
+		t.Errorf("image repository = %v", repo.Object)
+	}
+
+	// Dropping the mirror tag moves the webhook out of the mirror repository,
+	// which is deleted once it has no owners.
+	webhook = sourced("sha256:webhook", source, "quay.io/jetstack/cert-manager-webhook:v1.16.1")
+	if err := a.Sync(ctx, map[string]*inventory.Image{controller.Digest: controller, webhook.Digest: webhook}); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := listNames(t, client, ImageRepositoryResource)[mirrorRepo]; ok {
+		t.Error("ownerless mirror repository kept")
+	}
+
+	// An ImageRepository override moves the controller to another source at
+	// the next resync.
+	repo.Object["spec"].(map[string]any)["source"] = "https://github.com/example/Fork.git"
+	if _, err := client.Resource(ImageRepositoryResource).Update(ctx, repo, metav1.UpdateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.Resync(ctx, map[string]*inventory.Image{controller.Digest: controller, webhook.Digest: webhook}); err != nil {
+		t.Fatal(err)
+	}
+	if got := status(get(t, client, "sha256-controller").Object)["source"]; got != "https://github.com/example/fork" {
+		t.Errorf("overridden source = %v", got)
+	}
+	if got, want := listNames(t, client, SourceRepositoryResource), map[string][]string{
+		sourceRepo: {"sha256-webhook"},
+		AggregateName("https://github.com/example/fork"): {"sha256-controller"},
+	}; !reflect.DeepEqual(got, want) {
+		t.Errorf("source repositories = %v, want %v", got, want)
+	}
+	if nestedString(getResource(t, client, ImageRepositoryResource, controllerRepo).Object, "spec", "source") == "" {
+		t.Error("override not preserved")
+	}
+}
+
+func TestResyncRepairsRepositories(t *testing.T) {
+	ctx := context.Background()
+	const source = "https://github.com/example/app"
+	stale := &unstructured.Unstructured{Object: map[string]any{"spec": map[string]any{"url": "https://github.com/example/gone"}}}
+	stale.SetAPIVersion(apiVersion)
+	stale.SetKind("SourceRepository")
+	stale.SetName(AggregateName("https://github.com/example/gone"))
+	stale.SetOwnerReferences([]metav1.OwnerReference{{APIVersion: apiVersion, Kind: Kind, Name: "sha256-app", UID: "uid-sha256-app"}})
+	client := newClient(stale)
+	a := newPublisher(client, "node-a", "node-a")
+	app := sourced("sha256:app", source, "example/app:1.0")
+	if err := a.Resync(ctx, map[string]*inventory.Image{app.Digest: app}); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := listNames(t, client, SourceRepositoryResource), map[string][]string{AggregateName(source): {"sha256-app"}}; !reflect.DeepEqual(got, want) {
+		t.Errorf("source repositories = %v, want %v", got, want)
 	}
 }

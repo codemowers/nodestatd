@@ -11,7 +11,7 @@ metadata:
 rules:
   {{- if .Values.images.enabled }}
   - apiGroups: ["codemowers.io"]
-    resources: ["containerimages"]
+    resources: ["containerimages", "imagerepositories", "sourcerepositories"]
     verbs: ["get", "list", "create", "update", "delete"]
   # Node UIDs for owner references; entries of nodes that left the cluster are
   # released during resync.
@@ -37,10 +37,10 @@ subjects:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
-  name: nodestatd-containerimages-view
+  name: nodestatd-images-view
   labels:
     rbac.authorization.k8s.io/aggregate-to-view: "true"
 rules:
   - apiGroups: ["codemowers.io"]
-    resources: ["containerimages"]
+    resources: ["containerimages", "imagerepositories", "sourcerepositories"]
     verbs: ["get", "list", "watch"]

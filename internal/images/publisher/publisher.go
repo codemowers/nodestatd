@@ -9,6 +9,10 @@
 // entries list references only when they differ from the top-level union.
 // The last node deletes the object; the garbage collector deletes objects
 // whose owner Nodes are all gone.
+//
+// Each ContainerImage also owns the ImageRepository of every repository it is
+// held under and the SourceRepository of its source, so the garbage collector
+// deletes those once their last image is gone.
 package publisher
 
 import (
@@ -51,24 +55,31 @@ var conflictBackoff = wait.Backoff{Steps: 8, Duration: 50 * time.Millisecond, Fa
 type NodeLister func(ctx context.Context) (map[string]types.UID, error)
 
 type Publisher struct {
-	client dynamic.ResourceInterface
-	nodes  NodeLister
-	node   string
+	client      dynamic.ResourceInterface
+	imageRepos  *aggregate
+	sourceRepos *aggregate
+	nodes       NodeLister
+	node        string
 	// nodeUID is learned during Resync and required for owner references.
 	nodeUID types.UID
 	log     *slog.Logger
 	// applied maps image digests to the hash of this node's last written
 	// contribution.
 	applied map[string]string
+	// overrides maps image repositories to their ImageRepository
+	// spec.source, refreshed on every resync.
+	overrides map[string]string
 }
 
 func New(client dynamic.Interface, nodes NodeLister, node string, log *slog.Logger) *Publisher {
 	return &Publisher{
-		client:  client.Resource(Resource),
-		nodes:   nodes,
-		node:    node,
-		log:     log,
-		applied: map[string]string{},
+		client:      client.Resource(Resource),
+		imageRepos:  &aggregate{client: client.Resource(ImageRepositoryResource), kind: "ImageRepository", field: "repository"},
+		sourceRepos: &aggregate{client: client.Resource(SourceRepositoryResource), kind: "SourceRepository", field: "url"},
+		nodes:       nodes,
+		node:        node,
+		log:         log,
+		applied:     map[string]string{},
 	}
 }
 
@@ -94,9 +105,10 @@ func (p *Publisher) Sync(ctx context.Context, local map[string]*inventory.Image)
 	return errors.Join(errs...)
 }
 
-// Resync reconciles against the cluster: it writes every local image whose
-// object differs, removes this node from images it no longer has and removes
-// nodes that no longer exist.
+// Resync reconciles against the cluster: it refreshes source overrides, writes
+// every local image whose object differs, removes this node from images it no
+// longer has, removes nodes that no longer exist and reconciles the owners of
+// every ImageRepository and SourceRepository.
 func (p *Publisher) Resync(ctx context.Context, local map[string]*inventory.Image) error {
 	nodes, err := p.nodes(ctx)
 	if err != nil {
@@ -108,6 +120,9 @@ func (p *Publisher) Resync(ctx context.Context, local map[string]*inventory.Imag
 	}
 	// A re-registered node has a new UID, which changes every contribution.
 	p.nodeUID = uid
+	if err := p.loadOverrides(ctx); err != nil {
+		return err
+	}
 	list, err := p.client.List(ctx, metav1.ListOptions{})
 	if err != nil {
 		return fmt.Errorf("list %s: %w", Resource.Resource, err)
@@ -145,6 +160,8 @@ func (p *Publisher) Resync(ctx context.Context, local map[string]*inventory.Imag
 			delete(p.applied, digest)
 		}
 	}
+	// Repairs references a concurrent write moved out of order.
+	errs = append(errs, p.reconcileAggregates(ctx))
 	return errors.Join(errs...)
 }
 
@@ -172,11 +189,15 @@ func (p *Publisher) apply(ctx context.Context, image *inventory.Image, current *
 // update reads an object (or starts from current), applies mutate to its
 // expanded form and writes the compact result, deleting the object when no
 // nodes remain. Writes carry the read resourceVersion and are retried on
-// conflict with a fresh read.
+// conflict with a fresh read. A written object's repository owner references
+// follow its new references and source; the garbage collector releases those
+// of deleted objects.
 func (p *Publisher) update(ctx context.Context, name string, current *unstructured.Unstructured, mutate func(*document)) error {
+	var before, after *unstructured.Unstructured
 	err := retry.OnError(conflictBackoff, func(err error) bool {
 		return apierrors.IsConflict(err) || apierrors.IsAlreadyExists(err)
 	}, func() error {
+		before, after = nil, nil
 		obj := current
 		current = nil
 		if obj == nil {
@@ -207,18 +228,17 @@ func (p *Publisher) update(ctx context.Context, name string, current *unstructur
 		}
 
 		data, owners := doc.encode()
-		var specSource string
-		if obj != nil {
-			specSource, _, _ = unstructured.NestedString(obj.Object, "spec", "source")
-		}
-		derive(data, specSource)
+		derive(data, p.override(imageRepositories(data)))
 		if obj == nil {
 			created := &unstructured.Unstructured{Object: data}
 			created.SetAPIVersion(apiVersion)
 			created.SetKind(Kind)
 			created.SetName(name)
 			created.SetOwnerReferences(owners)
-			_, err := p.client.Create(ctx, created, metav1.CreateOptions{FieldManager: fieldManager})
+			written, err := p.client.Create(ctx, created, metav1.CreateOptions{FieldManager: fieldManager})
+			if err == nil {
+				after = written
+			}
 			return err
 		}
 		owners = mergeOwners(obj.GetOwnerReferences(), owners)
@@ -233,11 +253,17 @@ func (p *Publisher) update(ctx context.Context, name string, current *unstructur
 			updated.Object[key] = value
 		}
 		updated.SetOwnerReferences(owners)
-		_, err := p.client.Update(ctx, updated, metav1.UpdateOptions{FieldManager: fieldManager})
+		written, err := p.client.Update(ctx, updated, metav1.UpdateOptions{FieldManager: fieldManager})
+		if err == nil {
+			before, after = obj, written
+		}
 		return err
 	})
 	if err != nil {
 		return fmt.Errorf("update %s: %w", name, err)
+	}
+	if after != nil {
+		return p.link(ctx, before, after)
 	}
 	return nil
 }

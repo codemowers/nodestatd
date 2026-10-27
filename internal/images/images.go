@@ -1,5 +1,6 @@
 // Package images is the nodestatd module that records the node's containerd
-// images as ContainerImage objects.
+// images as ContainerImage objects, owning ImageRepository and
+// SourceRepository objects.
 package images
 
 import (

@@ -72,9 +72,6 @@ spec:
               description: User intent; nodestatd preserves it when updating the object.
               type: object
               properties:
-                source:
-                  description: Source repository URL overriding the one derived from image metadata.
-                  type: string
                 pin:
                   description: >-
                     Keep the image on nodes, exempt from kubelet image garbage
@@ -123,9 +120,11 @@ spec:
                   type: string
                 source:
                   description: >-
-                    spec.source, otherwise the repository from shared image
-                    metadata: the org.opencontainers.image.source annotation or
-                    label, org.label-schema.vcs-url, source_repository, or a code
+                    Lowercase source repository URL: the spec.source of an
+                    ImageRepository the image is held under, otherwise the
+                    repository from shared image metadata: the
+                    org.opencontainers.image.source annotation or label,
+                    org.label-schema.vcs-url, source_repository, or a code
                     forge org.opencontainers.image.url.
                   type: string
                 version:

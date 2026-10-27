@@ -25,8 +25,6 @@ metadata:
 
 # User intent. nodestatd never writes spec and preserves it on updates.
 spec:
-  # Overrides the source derived from image metadata.
-  source: https://github.com/stefanprodan/podinfo
   pin:
     # Always | WhileInUse. nodestatd marks records it pins with the
     # codemowers.io/pinned label and only ever removes its own pins.

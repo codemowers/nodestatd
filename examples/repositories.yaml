@@ -1,0 +1,30 @@
+# The ImageRepository and SourceRepository nodestatd derives from the podinfo
+# ContainerImage in containerimage.yaml. Both are named after their identity's
+# last path segment and the first 10 hex digits of its SHA-256, and are owned
+# by every ContainerImage held under the repository or built from the source.
+apiVersion: codemowers.io/v1alpha1
+kind: ImageRepository
+metadata:
+  name: podinfo-a39829ff7b
+  ownerReferences:
+    - apiVersion: codemowers.io/v1alpha1
+      kind: ContainerImage
+      name: sha256-d2b3cd93a48acdc91327533ce28fcb3169b2d9feaf73817dc2eb68858df64edb
+      uid: 0d6f3c4e-1b2a-4c5d-8e9f-a0b1c2d3e4f5
+spec:
+  repository: ghcr.io/stefanprodan/podinfo
+  # Optional; preserved by nodestatd and applied to every image of the
+  # repository at the next resync, overriding image metadata.
+  source: https://github.com/stefanprodan/podinfo
+---
+apiVersion: codemowers.io/v1alpha1
+kind: SourceRepository
+metadata:
+  name: podinfo-c4a0addcdf
+  ownerReferences:
+    - apiVersion: codemowers.io/v1alpha1
+      kind: ContainerImage
+      name: sha256-d2b3cd93a48acdc91327533ce28fcb3169b2d9feaf73817dc2eb68858df64edb
+      uid: 0d6f3c4e-1b2a-4c5d-8e9f-a0b1c2d3e4f5
+spec:
+  url: https://github.com/stefanprodan/podinfo

@@ -238,9 +238,9 @@ var sourceKeys = []struct {
 var forges = map[string]int{"github.com": 2, "codeberg.org": 2, "bitbucket.org": 2, "gitlab.com": 0}
 
 // derive sets status: the image reference, preferring tags over digest
-// references, the source repository, preferring specSource over image
-// metadata, the version and whether no node uses the image.
-func derive(data map[string]any, specSource string) {
+// references, the source repository, preferring an ImageRepository override
+// over image metadata, the version and whether no node uses the image.
+func derive(data map[string]any, override string) {
 	status := map[string]any{}
 	for _, key := range []string{"repoTags", "repoDigests"} {
 		if refs := slice(data[key]); len(refs) > 0 {
@@ -248,7 +248,7 @@ func derive(data map[string]any, specSource string) {
 			break
 		}
 	}
-	source := specSource
+	source := override
 	for _, candidate := range sourceKeys {
 		if source != "" {
 			break
@@ -332,10 +332,11 @@ func allNodes(data map[string]any, flag string) bool {
 	return len(nodes) > 0
 }
 
-// normalizeSource turns a source reference into a repository URL, dropping
-// git revisions and subdirectories (#rev:dir) and .git suffixes, and trimming
-// forge URLs to the repository. It returns "" for values that are not HTTP
-// URLs, or not forge URLs when forgeOnly is set.
+// normalizeSource turns a source reference into a lowercase repository URL,
+// dropping git revisions and subdirectories (#rev:dir), .git suffixes and
+// trailing slashes, and trimming forge URLs to the repository. Forges treat
+// owner and repository names case-insensitively. It returns "" for values
+// that are not HTTP URLs, or not forge URLs when forgeOnly is set.
 func normalizeSource(raw string, forgeOnly bool) string {
 	raw, _, _ = stdstrings.Cut(stdstrings.TrimSpace(raw), "#")
 	if rest, ok := stdstrings.CutPrefix(raw, "git@"); ok {
@@ -347,7 +348,7 @@ func normalizeSource(raw string, forgeOnly bool) string {
 		return ""
 	}
 	host := stdstrings.ToLower(parsed.Host)
-	path := stdstrings.Trim(stdstrings.TrimSuffix(stdstrings.Trim(parsed.Path, "/"), ".git"), "/")
+	path := stdstrings.ToLower(stdstrings.Trim(stdstrings.TrimSuffix(stdstrings.Trim(parsed.Path, "/"), ".git"), "/"))
 	segments, forge := forges[host]
 	switch {
 	case forge && segments > 0:

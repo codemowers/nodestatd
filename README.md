@@ -7,7 +7,7 @@ module, followed by listing the processes running in containers.
 
 | Module | Package | Output | Requires |
 | --- | --- | --- | --- |
-| images | `internal/images` | `ContainerImage` objects | containerd socket |
+| images | `internal/images` | `ContainerImage`, `ImageRepository` and `SourceRepository` objects | containerd socket |
 
 `internal/containerd` holds the shared containerd client, event subscription
 and container listing; `internal/server` serves health endpoints, which later
@@ -48,12 +48,14 @@ removes those. Only Linux platforms are recorded.
 
 `status` summarizes the object for printer columns: `image` (first tag,
 otherwise first digest reference), `source`, `version` and `unused`.
-`status.source` is `spec.source` when set, otherwise the first of the
-`org.opencontainers.image.source` manifest annotation or label,
-`org.label-schema.vcs-url`, `source_repository`, or an
-`org.opencontainers.image.url` on a code forge, normalized to the repository
-URL. Annotations come first because labels are more often inherited from base
-images; `spec.source` corrects values inherited either way.
+`status.source` is the `spec.source` of an ImageRepository the image is held
+under, otherwise the first of the `org.opencontainers.image.source` manifest
+annotation or label, `org.label-schema.vcs-url`, `source_repository`, or an
+`org.opencontainers.image.url` on a code forge, normalized to a lowercase
+repository URL without `.git` or trailing slash. Annotations come first
+because labels are more often inherited from base images; an ImageRepository
+override corrects values inherited either way, for every image of the
+repository.
 
 `status.version` is the version as published, such as `v1.16.1`: the
 `org.opencontainers.image.version` manifest annotation, otherwise an
@@ -84,12 +86,47 @@ kubectl get containerimages
 kubectl get cimg sha256-<hex> -o yaml
 ```
 
+### Image and source repositories
+
+Each ContainerImage owns the cluster-scoped `ImageRepository` of every
+repository it is held under (`spec.repository`, such as
+`quay.io/jetstack/cert-manager-controller`, without tag or digest) and the
+cluster-scoped `SourceRepository` of its `status.source` (`spec.url`). One
+source usually has several image repositories, and a mirrored image several
+ImageRepositories. Docker Hub references are canonical as
+`docker.io/library/<name>` and registry hosts are lowercase.
+
+Both are named after their identity: the last path segment, lowercased with
+other characters replaced by hyphens and truncated to 52 characters, then a
+hyphen and the first 10 hex digits of the identity's SHA-256, such as
+`cert-manager-c311baa7dd` for `https://github.com/cert-manager/cert-manager`.
+The hash is always present, since hyphen-joined segments would be ambiguous.
+Look objects up by identity with
+`--field-selector spec.repository=<repository>` or `spec.url=<url>`; both are
+immutable.
+
+nodestatd adds an image's owner reference after writing the image and moves
+it when the image's repositories or source change. The garbage collector
+removes references of deleted ContainerImages and deletes aggregates once
+their last owner is gone; nodestatd deletes aggregates it leaves without
+owners. Each resync recomputes all owners from the ContainerImages, repairing
+references concurrent writes moved out of order. An override in
+`ImageRepository.spec.source` is preserved and applied at the next resync; it
+lasts while images of the repository are on nodes. Other fields and owners of
+other kinds are preserved.
+
+```bash
+kubectl get imgrepo
+kubectl get srcrepo --field-selector spec.url=https://github.com/cert-manager/cert-manager
+```
+
 ## Examples
 
 `examples/containerimage.yaml` shows a ContainerImage with every field
-populated. `examples/warm-infra-images.yaml` is a MutatingAdmissionPolicy that
-sets `spec.pin: {policy: WhileInUse, warm: true}` on ContainerImages of
-infrastructure projects (cert-manager, Cilium, Traefik, CloudNativePG, k3s
+populated, and `examples/repositories.yaml` its ImageRepository and
+SourceRepository. `examples/warm-infra-images.yaml` is a
+MutatingAdmissionPolicy that sets `spec.pin: {policy: WhileInUse, warm: true}`
+on ContainerImages of infrastructure projects (cert-manager, Cilium, Traefik, CloudNativePG, k3s
 components and others, matched by organization prefix), so pods evicted during
 a drain start without pulling. nodestatd does not act on `spec.pin` yet.
 
@@ -102,9 +139,9 @@ go build ./cmd/nodestatd
 skaffold run    # uses skaffold.env; skaffold.ee-west-1.env for ee-west-1
 ```
 
-The chart installs the CRD, the DaemonSet, its RBAC, and a
-`containerimages` read role aggregated into `view`. The pod mounts the
-containerd socket through a `hostPath` and runs as UID 0 without capabilities,
+The chart installs the CRDs, the DaemonSet, its RBAC, and a read role for the
+three kinds aggregated into `view`. The pod mounts the containerd socket
+through a `hostPath` and runs as UID 0 without capabilities,
 so its namespace must admit privileged pods and `hostPath` volumes; Skaffold
 deploys it to `kube-system`.
 
