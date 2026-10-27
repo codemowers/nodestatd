@@ -48,7 +48,7 @@ const (
 	// OwnPinLabel marks records nodestatd pinned, so it only ever removes its
 	// own pins and leaves those of containerd's configuration, k3s image
 	// import or manual tooling alone.
-	OwnPinLabel = "codemowers.cloud/pinned"
+	OwnPinLabel = "codemowers.io/pinned"
 )
 
 type Index struct {

@@ -2,7 +2,7 @@
 # The image was pulled by its multi-platform index onto three nodes: two amd64
 # nodes and one arm64 node. Values shared by every manifest are stored once at
 # the top level; fields absent from a manifest or node entry inherit them.
-apiVersion: codemowers.cloud/v1alpha1
+apiVersion: codemowers.io/v1alpha1
 kind: ContainerImage
 metadata:
   # Named after the digest the image was pulled by: here the index.
@@ -29,7 +29,7 @@ spec:
   source: https://github.com/stefanprodan/podinfo
   pin:
     # Always | WhileInUse. nodestatd marks records it pins with the
-    # codemowers.cloud/pinned label and only ever removes its own pins.
+    # codemowers.io/pinned label and only ever removes its own pins.
     policy: WhileInUse
     # How long WhileInUse keeps the image after the last use ends anywhere.
     gracePeriod: 24h

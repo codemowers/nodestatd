@@ -12,7 +12,7 @@ spec:
   reinvocationPolicy: Never
   matchConstraints:
     resourceRules:
-      - apiGroups: ["codemowers.cloud"]
+      - apiGroups: ["codemowers.io"]
         apiVersions: ["v1alpha1"]
         operations: ["CREATE", "UPDATE"]
         resources: ["containerimages"]

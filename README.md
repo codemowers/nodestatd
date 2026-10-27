@@ -16,7 +16,7 @@ share netstatd's metrics port.
 ## Images module
 
 The images module records the images held in each node's containerd image
-store as cluster-scoped `ContainerImage` objects (`codemowers.cloud/v1alpha1`):
+store as cluster-scoped `ContainerImage` objects (`codemowers.io/v1alpha1`):
 index and platform manifest digests, config digests, compressed layer digests
 paired with diff IDs, config labels, manifest annotations, platform,
 entrypoint, user and exposed ports. Driftmower MCP reads them for node-level
@@ -43,7 +43,7 @@ exited, references the image, matching what kubelet image garbage collection
 considers unused; `status.unused` is set when every node agrees. Node entries
 are marked `pinned` when containerd reports the image pinned on that node,
 whether by containerd's configuration, k3s image import or another tool. Pins
-nodestatd sets carry its own `codemowers.cloud/pinned` label, and it only ever
+nodestatd sets carry its own `codemowers.io/pinned` label, and it only ever
 removes those. Only Linux platforms are recorded.
 
 `status` summarizes the object for printer columns: `image` (first tag,

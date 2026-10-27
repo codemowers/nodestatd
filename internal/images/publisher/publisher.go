@@ -34,7 +34,7 @@ import (
 )
 
 const (
-	Group        = "codemowers.cloud"
+	Group        = "codemowers.io"
 	Version      = "v1alpha1"
 	Kind         = "ContainerImage"
 	apiVersion   = Group + "/" + Version

@@ -10,7 +10,7 @@ metadata:
   name: nodestatd
 rules:
   {{- if .Values.images.enabled }}
-  - apiGroups: ["codemowers.cloud"]
+  - apiGroups: ["codemowers.io"]
     resources: ["containerimages"]
     verbs: ["get", "list", "create", "update", "delete"]
   # Node UIDs for owner references; entries of nodes that left the cluster are
@@ -41,6 +41,6 @@ metadata:
   labels:
     rbac.authorization.k8s.io/aggregate-to-view: "true"
 rules:
-  - apiGroups: ["codemowers.cloud"]
+  - apiGroups: ["codemowers.io"]
     resources: ["containerimages"]
     verbs: ["get", "list", "watch"]
