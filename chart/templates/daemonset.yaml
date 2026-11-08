@@ -47,7 +47,7 @@ spec:
                 fieldRef:
                   fieldPath: spec.nodeName
             - name: CONTAINERD_ADDRESS
-              value: /run/containerd/containerd.sock
+              value: {{ printf "/run/containerd/%s" (base .Values.containerd.socket) | quote }}
             - name: CONTAINERD_NAMESPACE
               value: {{ .Values.containerd.namespace | quote }}
             - name: LOG_LEVEL
@@ -82,9 +82,11 @@ spec:
           {{- end }}
           volumeMounts:
             - name: containerd-socket
-              mountPath: /run/containerd/containerd.sock
+              mountPath: /run/containerd
       volumes:
         - name: containerd-socket
           hostPath:
-            path: {{ .Values.containerd.socket | quote }}
-            type: Socket
+            # Mount the directory so replacing the socket on a containerd restart
+            # does not leave the agent bound to a dead socket inode.
+            path: {{ dir .Values.containerd.socket | quote }}
+            type: Directory
