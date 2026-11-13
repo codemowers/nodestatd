@@ -1,0 +1,40 @@
+name: test
+
+on:
+  push:
+    branches:
+      - "main"
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  go:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Vet
+        run: go vet ./...
+      - name: Test
+        run: go test ./...
+
+  chart:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Helm
+        uses: azure/setup-helm@v4
+      - name: Lint
+        run: helm lint chart
+      # Both containerd sockets the README documents must render.
+      - name: Render
+        run: |
+          helm template nodestatd chart --namespace kube-system > /dev/null
+          helm template nodestatd chart --namespace kube-system --set containerd.socket=/run/k3s/containerd/containerd.sock > /dev/null
