@@ -3,11 +3,23 @@
 # built artifact for local development.
 image: ""
 
-# Shared by all modules.
+# Container runtime of the nodes: containerd or crio.
+runtime: containerd
+
+# Shared by all modules when runtime is containerd.
 containerd:
   # Host path of the containerd socket; also the default on Talos.
   socket: /run/containerd/containerd.sock
   namespace: k8s.io
+
+# Shared by all modules when runtime is crio.
+crio:
+  # Host path of the CRI-O socket.
+  socket: /run/crio/crio.sock
+  # Host path of the containers/storage graph root and its driver, from
+  # [storage] in CRI-O's configuration. Mounted read-only for image content.
+  storage: /var/lib/containers/storage
+  storageDriver: overlay
 
 # Records the node's containerd images as ContainerImage objects.
 images:
