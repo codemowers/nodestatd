@@ -32,7 +32,8 @@ spec:
         - name: nodestatd
           image: {{ .Values.image | default (printf "ghcr.io/codemowers/nodestatd:%s" .Chart.AppVersion) | quote }}
           securityContext:
-            # The containerd socket is owned by root; no capabilities are needed.
+            # The runtime socket and image store are owned by root; no
+            # capabilities are needed.
             runAsUser: 0
             runAsGroup: 0
             readOnlyRootFilesystem: true
@@ -46,10 +47,21 @@ spec:
               valueFrom:
                 fieldRef:
                   fieldPath: spec.nodeName
+            - name: CONTAINER_RUNTIME
+              value: {{ .Values.runtime | quote }}
+            {{- if eq .Values.runtime "crio" }}
+            - name: CRIO_ADDRESS
+              value: {{ printf "/run/crio/%s" (base .Values.crio.socket) | quote }}
+            - name: CRIO_STORAGE_ROOT
+              value: /var/lib/containers/storage
+            - name: CRIO_STORAGE_DRIVER
+              value: {{ .Values.crio.storageDriver | quote }}
+            {{- else }}
             - name: CONTAINERD_ADDRESS
               value: {{ printf "/run/containerd/%s" (base .Values.containerd.socket) | quote }}
             - name: CONTAINERD_NAMESPACE
               value: {{ .Values.containerd.namespace | quote }}
+            {{- end }}
             - name: LOG_LEVEL
               value: {{ .Values.logLevel | quote }}
             - name: HEALTH_ADDR
@@ -81,12 +93,36 @@ spec:
             {{- toYaml . | nindent 12 }}
           {{- end }}
           volumeMounts:
+            {{- if eq .Values.runtime "crio" }}
+            - name: crio-socket
+              mountPath: /run/crio
+            - name: crio-storage
+              mountPath: /var/lib/containers/storage
+              readOnly: true
+              # Container root filesystems are mounted below the graph root;
+              # receiving unmounts keeps the pod from holding them busy.
+              mountPropagation: HostToContainer
+            {{- else }}
             - name: containerd-socket
               mountPath: /run/containerd
+            {{- end }}
       volumes:
+        {{- if eq .Values.runtime "crio" }}
+        - name: crio-socket
+          hostPath:
+            # Mount the directory so replacing the socket on a CRI-O restart
+            # does not leave the agent bound to a dead socket inode.
+            path: {{ dir .Values.crio.socket | quote }}
+            type: Directory
+        - name: crio-storage
+          hostPath:
+            path: {{ .Values.crio.storage | quote }}
+            type: Directory
+        {{- else }}
         - name: containerd-socket
           hostPath:
             # Mount the directory so replacing the socket on a containerd restart
             # does not leave the agent bound to a dead socket inode.
             path: {{ dir .Values.containerd.socket | quote }}
             type: Directory
+        {{- end }}

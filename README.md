@@ -1,9 +1,9 @@
 # nodestatd
 
 nodestatd runs on every Kubernetes node and reports what the node holds. Today
-it records the container images in each node's containerd image store, so you
-can ask the cluster which images, versions and source repositories are present
-on which nodes without logging in to them. Network monitoring and process
+it records the container images in each node's containerd or CRI-O image
+store, so you can ask the cluster which images, versions and source
+repositories are present on which nodes without logging in to them. Network monitoring and process
 listing are planned as further modules.
 
 It publishes three cluster-scoped kinds in `codemowers.io/v1alpha1`:
@@ -20,11 +20,12 @@ it.
 
 ## Requirements
 
-- Nodes running containerd: k3s, Talos, kubeadm and most managed clusters.
+- Nodes running containerd (k3s, Talos, kubeadm and most managed clusters) or
+  CRI-O.
 - Kubernetes 1.32 or newer.
 - A namespace that admits privileged pods and `hostPath` volumes, such as
-  `kube-system`. nodestatd mounts the containerd socket and runs as root,
-  without extra capabilities.
+  `kube-system`. nodestatd mounts the runtime socket, on CRI-O also its image
+  store read-only, and runs as root without extra capabilities.
 
 ## Install
 
@@ -44,6 +45,18 @@ helm install nodestatd oci://ghcr.io/codemowers/charts/nodestatd \
   --set containerd.socket=/run/k3s/containerd/containerd.sock
 ```
 
+On CRI-O:
+
+```bash
+helm install nodestatd oci://ghcr.io/codemowers/charts/nodestatd \
+  --namespace kube-system --version <version> \
+  --set runtime=crio
+```
+
+If CRI-O's `[storage]` configuration moves the graph root or uses a driver
+other than overlay, also set `crio.storage` and `crio.storageDriver`. Docker
+schema 1 images, which only CRI-O can still hold, are not recorded.
+
 The image defaults to `ghcr.io/codemowers/nodestatd` at the chart's version,
 built for amd64 and arm64. The DaemonSet tolerates every taint, so it also runs
 on control-plane nodes.
@@ -52,8 +65,12 @@ on control-plane nodes.
 
 | Value | Default | Purpose |
 | --- | --- | --- |
+| `runtime` | `containerd` | `containerd` or `crio`. |
 | `containerd.socket` | `/run/containerd/containerd.sock` | Host path of the containerd socket. k3s uses `/run/k3s/containerd/containerd.sock`. |
 | `containerd.namespace` | `k8s.io` | containerd namespace holding Kubernetes images. |
+| `crio.socket` | `/run/crio/crio.sock` | Host path of the CRI-O socket. |
+| `crio.storage` | `/var/lib/containers/storage` | Host path of CRI-O's image store (`graphroot`). |
+| `crio.storageDriver` | `overlay` | CRI-O's storage driver. |
 | `images.enabled` | `true` | Record images. |
 | `images.resyncInterval` | `1h` | Full reconciliation; image and container events trigger quicker updates. |
 | `images.recordEnv` | `false` | Record image environment variables. They can hold credentials baked into images and become readable to anyone who can read ContainerImages. |

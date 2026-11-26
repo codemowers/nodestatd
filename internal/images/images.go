@@ -1,6 +1,6 @@
-// Package images is the nodestatd module that records the node's containerd
-// images as ContainerImage objects, owning ImageRepository and
-// SourceRepository objects.
+// Package images is the nodestatd module that records the images in the
+// node's container runtime image store as ContainerImage objects, owning
+// ImageRepository and SourceRepository objects.
 package images
 
 import (
@@ -10,7 +10,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/codemowers/nodestatd/internal/containerd"
 	"github.com/codemowers/nodestatd/internal/images/inventory"
 	"github.com/codemowers/nodestatd/internal/images/publisher"
 	"github.com/containerd/platforms"
@@ -26,7 +25,7 @@ const retryInitial = 10 * time.Second
 type Config struct {
 	// ResyncInterval is the full reconciliation interval.
 	ResyncInterval time.Duration
-	// Debounce delays syncs after containerd image and container events.
+	// Debounce delays syncs after image and container events.
 	Debounce time.Duration
 	// RecordEnv records image config environment variables.
 	RecordEnv bool
@@ -34,17 +33,17 @@ type Config struct {
 
 type Module struct {
 	cfg       Config
-	client    *containerd.Client
+	runtime   Runtime
 	publisher *publisher.Publisher
 	log       *slog.Logger
 	ready     atomic.Bool
 }
 
-func New(cfg Config, client *containerd.Client, dynamicClient dynamic.Interface, metadataClient metadata.Interface, node string, log *slog.Logger) *Module {
+func New(cfg Config, runtime Runtime, dynamicClient dynamic.Interface, metadataClient metadata.Interface, node string, log *slog.Logger) *Module {
 	log = log.With("module", "images")
 	return &Module{
 		cfg:       cfg,
-		client:    client,
+		runtime:   runtime,
 		publisher: publisher.New(dynamicClient, nodeLister(metadataClient), node, log),
 		log:       log,
 	}
@@ -58,10 +57,10 @@ func (m *Module) Ready(context.Context) error {
 	return nil
 }
 
-// Run reconciles until ctx is done: incrementally after containerd events and
+// Run reconciles until ctx is done: incrementally after runtime events and
 // fully on start, after resubscribing and every resync interval.
 func (m *Module) Run(ctx context.Context) error {
-	events := m.client.Subscribe(ctx, "^/(images|containers)/")
+	events := m.runtime.Subscribe(ctx)
 	resync := time.NewTicker(m.cfg.ResyncInterval)
 	defer resync.Stop()
 	var debounce, retry <-chan time.Time
@@ -124,18 +123,14 @@ func (m *Module) reconcile(ctx context.Context, full bool) bool {
 }
 
 func (m *Module) collect(ctx context.Context) (map[string]*inventory.Image, error) {
-	records, err := m.client.ImageService().List(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("list images: %w", err)
-	}
-	inUse, err := m.client.ContainerImages(ctx)
+	snapshot, err := m.runtime.Snapshot(ctx)
 	if err != nil {
 		return nil, err
 	}
-	local, err := inventory.Collect(ctx, records, m.client.ContentStore(), inventory.Options{
+	local, err := inventory.Collect(ctx, snapshot.Records, snapshot.Content, inventory.Options{
 		Platform:  platforms.Default(),
 		RecordEnv: m.cfg.RecordEnv,
-		InUse:     inUse,
+		InUse:     snapshot.InUse,
 	})
 	if err != nil {
 		// Unresolvable records are skipped; the rest are still published.

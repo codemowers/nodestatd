@@ -7,22 +7,23 @@ implementation detail.
 ## Layout
 
 nodestatd runs as a DaemonSet and reports the state of each Kubernetes node.
-It is built from modules sharing one containerd connection; the images module
-is the first. netstatd's network monitoring is planned to join as a `net`
+It is built from modules sharing one container runtime connection, to
+containerd or CRI-O; the images module is the first. netstatd's network monitoring is planned to join as a `net`
 module, followed by listing the processes running in containers.
 
 | Module | Package | Output | Requires |
 | --- | --- | --- | --- |
-| images | `internal/images` | `ContainerImage`, `ImageRepository` and `SourceRepository` objects | containerd socket |
+| images | `internal/images` | `ContainerImage`, `ImageRepository` and `SourceRepository` objects | containerd socket, or CRI-O socket and image store |
 
 `internal/containerd` holds the shared containerd client, event subscription
-and container listing; `internal/server` serves health endpoints, which later
+and container listing; `internal/crio` the CRI-O equivalents: a CRI client,
+a reader for its containers/storage image store and a watch on that store; `internal/server` serves health endpoints, which later
 share netstatd's metrics port. Keep module boundaries when adding features.
 
 ## Images module
 
-The images module records the images held in each node's containerd image
-store as cluster-scoped `ContainerImage` objects (`codemowers.io/v1alpha1`):
+The images module records the images held in each node's containerd or CRI-O
+image store as cluster-scoped `ContainerImage` objects (`codemowers.io/v1alpha1`):
 index and platform manifest digests, config digests, compressed layer digests
 paired with diff IDs, config labels, manifest annotations, platform,
 entrypoint, user and exposed ports. Driftmower MCP reads them for node-level
@@ -47,8 +48,9 @@ top-level value.
 Node entries are marked `unused` when no container on the node, running or
 exited, references the image, matching what kubelet image garbage collection
 considers unused; `status.unused` is set when every node agrees. Node entries
-are marked `pinned` when containerd reports the image pinned on that node,
-whether by containerd's configuration, k3s image import or another tool. Pins
+are marked `pinned` when the runtime reports the image pinned on that node,
+whether by its configuration (CRI-O's `pinned_images`), k3s image import or
+another tool. Pins
 nodestatd sets carry its own `codemowers.io/pinned` label, and it only ever
 removes those. Only Linux platforms are recorded.
 
@@ -117,6 +119,21 @@ references concurrent writes moved out of order. An override in
 lasts while images of the repository are on nodes. Other fields and owners of
 other kinds are preserved.
 
+### CRI-O
+
+`images.Runtime` abstracts the runtime as containerd-style image records
+resolved against a content provider, so inventory and publishing are shared.
+For CRI-O, images, references and pins come from the CRI `ListImages` and
+containers from `ListContainers`, so `repoDigests` hold exactly the references
+kubelet reports as pod `imageID`s. CRI-O lists a repo digest for each manifest
+digest of an image, so references to a platform manifest merge into the image
+of its index. Manifests, indexes and configs are read from containers/storage
+big data (`<driver>-images/<id>/`), which keeps the pulled index next to the
+platform manifest; images missing from the store, such as OCI artifacts, are
+skipped. CRI-O has no image events, so changes to the store's JSON files
+trigger syncs. Docker schema 1 images, which containerd converts on pull and
+CRI-O stores as pulled, are skipped. nodestatd cannot pin images on CRI-O.
+
 ## Configuration
 
 The chart maps its values to these variables; each also has a command-line
@@ -125,14 +142,18 @@ flag.
 | Variable | Default | Purpose |
 | --- | --- | --- |
 | `NODE_NAME` | `unset` | Required node name; the chart sets it from `spec.nodeName`. |
+| `CONTAINER_RUNTIME` | `containerd` | `containerd` or `crio`. |
 | `CONTAINERD_ADDRESS` | `/run/containerd/containerd.sock` | containerd socket. |
 | `CONTAINERD_NAMESPACE` | `k8s.io` | containerd namespace holding Kubernetes containers and images. |
+| `CRIO_ADDRESS` | `/run/crio/crio.sock` | CRI-O socket. |
+| `CRIO_STORAGE_ROOT` | `/var/lib/containers/storage` | containers/storage graph root CRI-O pulls into. |
+| `CRIO_STORAGE_DRIVER` | `overlay` | containers/storage driver; stores of other drivers in the graph root are ignored. |
 | `KUBECONFIG` | `unset` | Kubeconfig path; in-cluster configuration when unset. |
-| `HEALTH_ADDR` | `:5281` | `/healthz` checks containerd; `/readyz` waits for each enabled module. |
+| `HEALTH_ADDR` | `:5281` | `/healthz` checks the runtime; `/readyz` waits for each enabled module. |
 | `LOG_LEVEL` | `info` | debug, info, warn or error. |
 | `ENABLE_IMAGES` | `true` | Run the images module. |
 | `IMAGES_RESYNC_INTERVAL` | `1h` | Full image reconciliation against the cluster. |
-| `IMAGES_EVENT_DEBOUNCE` | `5s` | Delay before syncing after containerd image and container events. |
+| `IMAGES_EVENT_DEBOUNCE` | `5s` | Delay before syncing after image and container events. |
 | `IMAGES_RECORD_ENV` | `false` | Record config environment variables, which may contain baked-in credentials. |
 
 ## Development
@@ -142,13 +163,22 @@ go test ./...
 go vet ./...
 go build ./cmd/nodestatd
 skaffold run    # uses skaffold.env; skaffold.ee-west-1.env for ee-west-1
+# CRI-O test cluster, with the crio profile:
+env $(xargs < skaffold.veebkolm.env) skaffold run
 ```
 
 The chart installs the CRDs, the DaemonSet, its RBAC, and a read role for the
-three kinds aggregated into `view`. The pod mounts the containerd socket
-through a `hostPath` and runs as UID 0 without capabilities, so its namespace
-must admit privileged pods and `hostPath` volumes; Skaffold deploys it to
+three kinds aggregated into `view`. The pod mounts the containerd socket, or
+CRI-O's socket and read-only graph root, through `hostPath` volumes and runs
+as UID 0 without capabilities, so its namespace must admit privileged pods and
+`hostPath` volumes; Skaffold deploys it to
 `kube-system`.
+
+Driftmower's desktop install depends on the chart's values: it sets
+`runtime=crio` when every node runs CRI-O, and only when `helm show values`
+lists a top-level `runtime` key; otherwise it uses `containerd.socket` (the
+k3s socket on k3s). It relies on the `crio.*` defaults. Keep these names and
+defaults stable, or change Driftmower with them.
 
 The image is a statically linked binary on `scratch`; the Docker build runs
 the tests. GitHub Actions builds `linux/amd64` and `linux/arm64` on native

@@ -35,3 +35,11 @@ manifests:
           nodeSelector.kubernetes\.io/arch: amd64
         setValueTemplates:
           image: "{{.IMAGE_FULLY_QUALIFIED_nodestatd}}"
+
+profiles:
+  # Clusters running CRI-O with its default storage configuration.
+  - name: crio
+    patches:
+      - op: add
+        path: /manifests/helm/releases/0/setValues/runtime
+        value: crio

@@ -295,14 +295,18 @@ func detectMediaType(ctx context.Context, provider content.Provider, desc ocispe
 		return desc, nil
 	}
 	var probe struct {
-		MediaType string          `json:"mediaType"`
-		Manifests json.RawMessage `json:"manifests"`
-		Config    json.RawMessage `json:"config"`
+		SchemaVersion int             `json:"schemaVersion"`
+		MediaType     string          `json:"mediaType"`
+		Manifests     json.RawMessage `json:"manifests"`
+		Config        json.RawMessage `json:"config"`
 	}
 	if err := readJSON(ctx, provider, desc, &probe); err != nil {
 		return desc, fmt.Errorf("media type %q: %w", desc.MediaType, err)
 	}
 	switch {
+	case probe.SchemaVersion == 1:
+		// containerd converts these on pull; CRI-O stores them as pulled.
+		return desc, fmt.Errorf("docker schema 1 manifests are not supported")
 	case images.IsIndexType(probe.MediaType) || images.IsManifestType(probe.MediaType):
 		desc.MediaType = probe.MediaType
 	case probe.Manifests != nil:
